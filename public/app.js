@@ -31,6 +31,10 @@ const state = {
   fsResult: null,         // 最近一次伏笔回收路线校验结果
   fsStale: false,         // 校验之后剧情或校验条件又被修改过
   _fsSig: null,           // 校验面板场景签名（避免每次编辑都重建下拉框）
+  pacing: { highIntensityScenes: [], maxConsecutive: 3 }, // 节奏校验设置（编辑中；高强度场景 ID + 允许的最长连续数）
+  pacResult: null,        // 最近一次节奏校验结果
+  pacStale: false,        // 校验之后剧情或校验设置又被修改过
+  _pacSig: null,          // 节奏面板场景签名（避免每次编辑都重建勾选列表）
   dirty: false,
   saving: false,
 };
@@ -100,6 +104,10 @@ async function openStory(id) {
   state.fsResult = null;
   state.fsStale = false;
   state._fsSig = null;
+  state.pacing = { highIntensityScenes: [], maxConsecutive: 3 };
+  state.pacResult = null;
+  state.pacStale = false;
+  state._pacSig = null;
   $('storySelect').value = id;
   renderAll();
   await runAnalysis(false);
@@ -173,6 +181,10 @@ async function deleteStory() {
   state.fsResult = null;
   state.fsStale = false;
   state._fsSig = null;
+  state.pacing = { highIntensityScenes: [], maxConsecutive: 3 };
+  state.pacResult = null;
+  state.pacStale = false;
+  state._pacSig = null;
   const next = await loadList();
   if (next) await openStory(next);
   else { renderAll(); toast('已删除'); }
@@ -221,6 +233,7 @@ function renderAll() {
   renderForcedPanel();
   renderCoveragePanel();
   renderForeshadowPanel();
+  renderPacingPanel();
   renderDetail(null);
 }
 
@@ -541,6 +554,7 @@ function markDirty(rerender) {
   markForcedStale();
   markCoverageStale();
   markForeshadowStale();
+  markPacingStale();
   renderSaveStatus();
   if (rerender) rerender();
   else renderAnalysis();
@@ -549,6 +563,7 @@ function markDirty(rerender) {
   renderForcedPanel(); // 仅刷新过期提示与已展示的结果，不重新分析
   renderCoveragePanel(); // 仅刷新过期提示与已展示的路线，不重新生成
   renderForeshadowPanel(); // 内部有签名缓存，场景未变时仅刷新过期提示与结果
+  renderPacingPanel(); // 内部有签名缓存，场景未变时仅刷新过期提示与结果
   clearTimeout(reanalyzeTimer);
   reanalyzeTimer = setTimeout(() => runAnalysis(true), 500);
 }
@@ -2389,6 +2404,200 @@ function renderForeshadowResult() {
   }
 }
 
+/* ============================================================
+ * 节奏校验（高强度场景连续段）
+ * ============================================================ */
+function pacSignature() {
+  if (!state.story) return '';
+  // 场景集合（ID / 标题）变化时才重建勾选行
+  return JSON.stringify(state.story.scenes.map((s) => [s.id, s.title || '']));
+}
+
+function markPacingStale() {
+  if (!state.pacResult) return;
+  state.pacStale = true;
+  const el = $('pacStale');
+  if (el) el.hidden = false;
+}
+
+function renderPacingPanel() {
+  const card = $('pacCard');
+  if (!state.story) { card.hidden = true; return; }
+  card.hidden = false;
+
+  // 仅当场景集合变化时才重建勾选行，避免打断正在进行的交互
+  const sig = pacSignature();
+  if (sig !== state._pacSig) {
+    state._pacSig = sig;
+    // 场景被删除时，自动从校验设置中剔除
+    const valid = new Set(state.story.scenes.map((s) => s.id));
+    state.pacing.highIntensityScenes = state.pacing.highIntensityScenes.filter((id) => valid.has(id));
+    renderPacScenes();
+  }
+
+  // 不打断正在输入的焦点；失焦（change）后由事件回调写回合法值
+  const maxInput = $('pacMax');
+  if (document.activeElement !== maxInput) maxInput.value = state.pacing.maxConsecutive;
+  $('pacStale').hidden = !state.pacStale;
+  renderPacingResult();
+}
+
+/** 渲染高强度场景勾选列表 */
+function renderPacScenes() {
+  const box = $('pacScenes');
+  box.innerHTML = '';
+  const selected = new Set(state.pacing.highIntensityScenes);
+  for (const sc of state.story.scenes) {
+    const label = document.createElement('label');
+    label.className = 'pac-scene-row';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = selected.has(sc.id);
+    cb.addEventListener('change', () => {
+      if (cb.checked) {
+        if (!state.pacing.highIntensityScenes.includes(sc.id)) state.pacing.highIntensityScenes.push(sc.id);
+      } else {
+        state.pacing.highIntensityScenes = state.pacing.highIntensityScenes.filter((id) => id !== sc.id);
+      }
+      markPacingStale();
+    });
+    const span = document.createElement('span');
+    span.textContent = `${sc.id}${sc.title ? ' — ' + sc.title : ''}`;
+    label.append(cb, span);
+    box.appendChild(label);
+  }
+}
+
+async function runPacing() {
+  if (!state.story) return;
+  const highIntensityScenes = state.pacing.highIntensityScenes;
+  const maxConsecutive = Number(state.pacing.maxConsecutive);
+  if (!highIntensityScenes.length) return toast('请先勾选至少一个高强度场景');
+  if (!Number.isInteger(maxConsecutive) || maxConsecutive < 1 || maxConsecutive > 10) {
+    return toast('允许的最长连续场景数必须是 1～10 的整数');
+  }
+
+  try {
+    // 对编辑中的未保存草稿直接校验（不落盘）
+    state.pacResult = await api('POST', '/api/pacing', {
+      story: state.story,
+      query: { highIntensityScenes, maxConsecutive },
+    });
+    state.pacStale = false;
+    renderPacingPanel();
+  } catch (e) {
+    toast(`节奏校验失败：${e.message}`);
+  }
+}
+
+const PAC_STATUS_META = {
+  pass: { cls: 'pq-ok', icon: '✓' },
+  violation: { cls: 'pq-err', icon: '✗' },
+  truncated: { cls: 'pq-warn', icon: '⚠' },
+  'start-blocked': { cls: 'pq-err', icon: '✗' },
+};
+
+/** 连续计数徽标：超过允许上限标红 */
+function streakBadge(streak, limit) {
+  if (!streak) return '<span class="badge badge-ok">连续 0 · 已清零</span>';
+  const cls = streak > limit ? 'badge-err' : 'badge-warn';
+  return `<span class="badge ${cls}">连续高强度 ${streak}</span>`;
+}
+
+/** 超限路线视图：场景节点带高强度标记与连续计数，选项边带选择后的连续计数 */
+function buildPacingPathView(path, knownVars, limit) {
+  const wrap = document.createElement('div');
+  wrap.className = 'path-view';
+  (path || []).forEach((node, i, arr) => {
+    if (node.kind === 'scene') {
+      const div = document.createElement('div');
+      div.className = 'path-node scene';
+      let badge = i === 0 ? '<span class="badge badge-ok">起点</span>' : '';
+      if (node.highIntensity) badge += '<span class="badge badge-req">高强度</span>';
+      if (i === arr.length - 1) badge += '<span class="badge badge-err">超限位置</span>';
+      div.innerHTML = `<span class="pn-title"></span><span class="pn-id"></span>${badge}`;
+      div.querySelector('.pn-title').textContent = node.title || node.sceneId;
+      div.querySelector('.pn-id').textContent = node.sceneId;
+      div.insertAdjacentHTML('beforeend', streakBadge(node.streak, limit));
+      div.insertAdjacentHTML('beforeend', stateChips(node.state, knownVars || []));
+      wrap.appendChild(div);
+    } else {
+      const div = document.createElement('div');
+      div.className = 'path-edge';
+      div.appendChild(document.createTextNode(
+        `选项 ${node.optionIndex + 1}「${node.optionText || ''}」 → ${node.target}`));
+      if (node.optionUid) {
+        const uid = document.createElement('code');
+        uid.className = 'cov-uid';
+        uid.textContent = node.optionUid;
+        div.appendChild(uid);
+      }
+      div.insertAdjacentHTML('beforeend', streakBadge(node.streakAfter, limit));
+      if (node.stateAfter) {
+        div.insertAdjacentHTML('beforeend', stateChips(node.stateAfter, knownVars || []));
+      }
+      wrap.appendChild(div);
+    }
+  });
+  return wrap;
+}
+
+function renderPacingResult() {
+  const box = $('pacResult');
+  box.innerHTML = '';
+  const r = state.pacResult;
+  if (!r || !state.story) return;
+
+  const meta = PAC_STATUS_META[r.status] || { cls: 'pq-warn', icon: '⚠' };
+  const banner = document.createElement('div');
+  banner.className = `pq-banner ${meta.cls}`;
+  banner.textContent = `${meta.icon} ${r.message}`;
+  box.appendChild(banner);
+
+  if (r.conditionErrors && r.conditionErrors.length) {
+    const note = document.createElement('div');
+    note.className = 'pq-note';
+    note.textContent = `剧情中存在 ${r.conditionErrors.length} 处条件语法错误，本次校验按恒真处理（详见一致性分析）。`;
+    box.appendChild(note);
+  }
+
+  if (r.startBlocked) return;
+
+  // 统计
+  const verdict = { pass: '通过', violation: '发现超限' }[r.status] || '无法判定';
+  const stats = document.createElement('div');
+  stats.className = 'stats';
+  stats.innerHTML = `
+    <div class="stat ${r.status === 'pass' ? 'stat-ok' : (r.status === 'violation' ? 'stat-bad' : 'stat-warn')}"><span>校验结论</span><b>${verdict}</b></div>
+    <div class="stat"><span>允许最长连续</span><b>${r.query.maxConsecutive}</b></div>
+    <div class="stat"><span>实际最长连续段</span><b>${r.maxStreak}</b></div>
+    <div class="stat"><span>可达高强度场景</span><b>${r.reachedHighScenes.length} / ${r.query.highIntensityScenes.length}</b></div>
+    <div class="stat"><span>枚举具体状态</span><b>${r.counts.states}</b></div>
+    <div class="stat"><span>布尔变量</span><b>${r.counts.variables}</b></div>
+  `;
+  box.appendChild(stats);
+
+  // 勾选了但实际不可达的高强度场景：提示作者该校验设置可能无意义
+  const unreachable = r.query.highIntensityScenes
+    .filter((s) => !r.reachedHighScenes.some((x) => x.sceneId === s.sceneId));
+  if (unreachable.length) {
+    const note = document.createElement('div');
+    note.className = 'pq-note';
+    note.textContent = `以下勾选的高强度场景在当前草稿中不可达（不参与任何可走路线）：${
+      unreachable.map((s) => `${s.title || s.sceneId}（${s.sceneId}）`).join('、')}`;
+    box.appendChild(note);
+  }
+
+  // 违规：按选项步数最短的超限路线（沿途场景、变量状态与连续计数）
+  if (r.violation) {
+    const label = document.createElement('div');
+    label.className = 'cov-section-label';
+    label.textContent = `最短超限路线（${r.violation.depth} 步，连续 ${r.violation.streak} 个高强度场景，在「${r.violation.title || r.violation.sceneId}」超过允许的 ${r.query.maxConsecutive} 个）`;
+    box.appendChild(label);
+    box.appendChild(buildPacingPathView(r.violation.path, r.knownVars, r.query.maxConsecutive));
+  }
+}
+
 function fmtTime(iso) {
   if (!iso) return '';
   const d = new Date(iso);
@@ -2800,6 +3009,17 @@ function bindGlobalEvents() {
     state.foreshadow.payoffs.push('');
     renderFsRows('payoffs');
     markForeshadowStale();
+  });
+  $('btnRunPacing').addEventListener('click', runPacing);
+  $('pacMax').addEventListener('change', (e) => {
+    const v = Number(e.target.value);
+    if (!Number.isInteger(v) || v < 1 || v > 10) {
+      toast('允许的最长连续场景数必须是 1～10 的整数');
+      e.target.value = state.pacing.maxConsecutive;
+      return;
+    }
+    state.pacing.maxConsecutive = v;
+    markPacingStale();
   });
   $('btnCloseDetail').addEventListener('click', () => $('detailPanel').hidden = true);
   $('btnSaveBaseline').addEventListener('click', saveBaseline);

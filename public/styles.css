@@ -530,6 +530,24 @@ code {
 .fs-hint { font-size: 11.5px; color: var(--muted); line-height: 1.5; margin-bottom: 8px; }
 .fs-result .path-edge .badge-req { margin-left: 4px; }
 
+/* ---------- 节奏校验（高强度场景连续段） ---------- */
+.pac-card { max-height: 46%; display: flex; flex-direction: column; }
+.pac-card .pac-result { overflow: auto; display: flex; flex-direction: column; gap: 8px; }
+.pac-hint { font-size: 11.5px; color: var(--muted); line-height: 1.5; margin-bottom: 8px; }
+.pac-scene-list {
+  display: flex; flex-direction: column; gap: 4px;
+  border: 1px solid var(--border); border-radius: 8px;
+  padding: 7px 9px; max-height: 168px; overflow: auto; background: #fff;
+}
+.pac-scene-row {
+  display: flex; align-items: center; gap: 7px;
+  font-size: 12.5px; cursor: pointer; padding: 1px 0;
+}
+.pac-scene-row input { width: auto; }
+.pac-max-input { max-width: 120px; }
+.pac-result .path-node .badge,
+.pac-result .path-edge .badge { margin-left: 4px; }
+
 /* ---------- Toast ---------- */
 .toast {
   position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%);

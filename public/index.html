@@ -204,6 +204,24 @@
         <div id="fsResult" class="fs-result"></div>
       </section>
 
+      <section id="pacCard" class="card pac-card" hidden>
+        <div class="card-head">
+          <h2>节奏校验</h2>
+          <button id="btnRunPacing" class="btn btn-small btn-primary">运行校验</button>
+        </div>
+        <div class="pac-hint">勾选<b>高强度场景</b>（战斗、追逐、高潮戏等），并设置<b>允许的最长连续场景数</b>（1～10）：沿「场景 + 完整变量状态」图把「当前连续高强度计数」并入遍历——每次进入高强度场景计数 +1，进入非高强度场景即清零，环路中的连续段也会累计；若某条可走路线连续进入的高强度场景超过上限，按选项步数展示最短超限路线与沿途变量状态、连续计数。完整遍历且无超限才判通过；达到状态上限时标明无法判定。</div>
+        <div class="field">
+          <span>高强度场景（勾选后参与连续计数）</span>
+          <div id="pacScenes" class="pac-scene-list"></div>
+        </div>
+        <label class="field">
+          <span>允许的最长连续场景数（1～10）</span>
+          <input type="number" id="pacMax" class="pac-max-input" min="1" max="10" step="1" />
+        </label>
+        <div id="pacStale" class="diff-stale" hidden>⚠ 剧情或校验设置已修改，以下结果可能过期，请重新「运行校验」</div>
+        <div id="pacResult" class="pac-result"></div>
+      </section>
+
       <section id="detailPanel" class="card detail-card" hidden>
         <div class="card-head">
           <h2 id="detailTitle">问题详情</h2>

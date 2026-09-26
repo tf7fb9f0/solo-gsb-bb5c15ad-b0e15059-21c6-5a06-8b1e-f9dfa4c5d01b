@@ -10,6 +10,7 @@ const { planCoverage } = require('./src/coverage');
 const { replayRoute } = require('./src/replay');
 const { analyzeForcedChoices, bypassForced } = require('./src/forcedchoice');
 const { checkForeshadow } = require('./src/foreshadow');
+const { checkPacing } = require('./src/pacing');
 const { buildBaseline, compareWithBaseline } = require('./src/baseline');
 
 const app = express();
@@ -197,6 +198,29 @@ app.post('/api/stories/:id/foreshadow', wrap((req, res) => {
   const body = req.body || {};
   const query = body.query !== undefined ? body.query : body;
   res.json(checkForeshadow(story, query));
+}));
+
+// ---- 节奏校验（高强度场景连续段）：对请求体中的草稿剧情直接校验（不落盘），供编辑页面板实时使用 ----
+// 请求体：{ story: <剧情>, query: { highIntensityScenes: [场景ID...], maxConsecutive: 1～10 } }
+// 沿「场景 + 完整变量状态」图把「当前连续高强度计数」并入遍历去重键：进入高强度场景
+// 计数 +1，进入非高强度场景清零，环路中的连续段也随计数累计；计数超过允许上限即违规，
+// 返回按选项步数最短的超限路线（沿途场景、变量状态与连续计数）。完整遍历且无超限才判
+// 通过；状态上限截断时以 truncated 标明无法判定。查询校验失败（场景不存在 / 列表为空 /
+// 连续数越界等）返回 400。
+app.post('/api/pacing', wrap((req, res) => {
+  const body = req.body || {};
+  const story = body.story !== undefined ? body.story : body;
+  const opts = Number.isInteger(body.maxStates) && body.maxStates > 0 ? { maxStates: body.maxStates } : {};
+  res.json(checkPacing(story, body.query || {}, opts));
+}));
+
+// ---- 对已保存的剧情做节奏校验（请求体即 query 或 { query }） ----
+app.post('/api/stories/:id/pacing', wrap((req, res) => {
+  const story = storage.getStory(req.params.id);
+  if (!story) return res.status(404).json({ error: '剧情不存在' });
+  const body = req.body || {};
+  const query = body.query !== undefined ? body.query : body;
+  res.json(checkPacing(story, query));
 }));
 
 // ---- 分析基线：把当前（通常是编辑中的）分析结果保存为基线，随剧情 JSON 持久化 ----
