@@ -530,6 +530,34 @@ code {
 .fs-hint { font-size: 11.5px; color: var(--muted); line-height: 1.5; margin-bottom: 8px; }
 .fs-result .path-edge .badge-req { margin-left: 4px; }
 
+/* ---------- 节奏校验（高强度连场） ---------- */
+.pace-card { display: flex; flex-direction: column; }
+.pace-card #paceResult { overflow: auto; display: flex; flex-direction: column; gap: 8px; }
+.pace-card #paceLimit { width: 110px; }
+.pace-scene-list {
+  display: flex; flex-direction: column; gap: 4px;
+  max-height: 168px; overflow: auto;
+  border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px;
+  background: #fbfcfe;
+}
+.pace-scene-row {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12.5px; cursor: pointer; padding: 2px 0;
+}
+.pace-scene-row code {
+  font-family: ui-monospace, Menlo, monospace; font-size: 11.5px;
+  background: var(--info-bg); border-radius: 4px; padding: 1px 5px;
+}
+.pace-scene-title { color: var(--muted); }
+.pace-streak {
+  margin-left: 6px; border-radius: 10px; padding: 1px 9px;
+  font-size: 11px; font-weight: 700; white-space: nowrap;
+}
+.pace-streak-hot { background: var(--warning-bg); color: var(--warning); }
+.pace-streak-zero { background: var(--ok-bg); color: var(--ok); }
+#paceResult .path-edge .badge-warn,
+#paceResult .path-edge .badge-ok { margin-left: 4px; }
+
 /* ---------- Toast ---------- */
 .toast {
   position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%);

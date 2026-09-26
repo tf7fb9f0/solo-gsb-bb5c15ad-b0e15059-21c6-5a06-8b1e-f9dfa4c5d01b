@@ -204,6 +204,24 @@
         <div id="fsResult" class="fs-result"></div>
       </section>
 
+      <section id="paceCard" class="card pace-card" hidden>
+        <div class="card-head">
+          <h2>节奏校验（高强度连场）</h2>
+          <button id="btnRunPacing" class="btn btn-small btn-primary">运行校验</button>
+        </div>
+        <div class="fs-hint">勾选<b>高强度场景</b>并设置允许的<b>最长连续场景数（1～10）</b>：沿「场景 + 完整变量状态」图把「当前连续高强度计数」并入遍历——进入高强度场景即累加，进入非高强度场景即清零，<b>环路中的连续段也照常累计</b>；一旦连续经过超过上限的高强度场景，按选项步数展示最短违规路线与沿途变量状态、连续计数。仅在完整遍历且无超限时判通过，达到状态上限时标明无法判定。</div>
+        <label class="field">
+          <span>允许的最长连续高强度场景数（1～10）</span>
+          <input type="number" id="paceLimit" min="1" max="10" step="1" />
+        </label>
+        <div class="field">
+          <span>高强度场景（勾选后参与连续计数）</span>
+          <div id="paceScenes" class="pace-scene-list"></div>
+        </div>
+        <div id="paceStale" class="diff-stale" hidden>⚠ 剧情、勾选或连续数上限已修改，以下结果可能过期，请重新「运行校验」</div>
+        <div id="paceResult" class="fs-result"></div>
+      </section>
+
       <section id="detailPanel" class="card detail-card" hidden>
         <div class="card-head">
           <h2 id="detailTitle">问题详情</h2>

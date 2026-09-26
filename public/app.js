@@ -31,6 +31,10 @@ const state = {
   fsResult: null,         // 最近一次伏笔回收路线校验结果
   fsStale: false,         // 校验之后剧情或校验条件又被修改过
   _fsSig: null,           // 校验面板场景签名（避免每次编辑都重建下拉框）
+  pacing: { intenseScenes: [], maxConsecutive: 3 }, // 节奏校验条件（编辑中；高强度场景 ID + 最长连续数）
+  paceResult: null,       // 最近一次节奏校验结果
+  paceStale: false,       // 校验之后剧情、勾选或连续数上限又被修改过
+  _paceSig: null,         // 节奏面板场景签名（避免每次编辑都重建勾选行）
   dirty: false,
   saving: false,
 };
@@ -100,6 +104,10 @@ async function openStory(id) {
   state.fsResult = null;
   state.fsStale = false;
   state._fsSig = null;
+  state.pacing = { intenseScenes: [], maxConsecutive: 3 };
+  state.paceResult = null;
+  state.paceStale = false;
+  state._paceSig = null;
   $('storySelect').value = id;
   renderAll();
   await runAnalysis(false);
@@ -173,6 +181,10 @@ async function deleteStory() {
   state.fsResult = null;
   state.fsStale = false;
   state._fsSig = null;
+  state.pacing = { intenseScenes: [], maxConsecutive: 3 };
+  state.paceResult = null;
+  state.paceStale = false;
+  state._paceSig = null;
   const next = await loadList();
   if (next) await openStory(next);
   else { renderAll(); toast('已删除'); }
@@ -221,6 +233,7 @@ function renderAll() {
   renderForcedPanel();
   renderCoveragePanel();
   renderForeshadowPanel();
+  renderPacingPanel();
   renderDetail(null);
 }
 
@@ -541,6 +554,7 @@ function markDirty(rerender) {
   markForcedStale();
   markCoverageStale();
   markForeshadowStale();
+  markPacingStale();
   renderSaveStatus();
   if (rerender) rerender();
   else renderAnalysis();
@@ -549,6 +563,7 @@ function markDirty(rerender) {
   renderForcedPanel(); // 仅刷新过期提示与已展示的结果，不重新分析
   renderCoveragePanel(); // 仅刷新过期提示与已展示的路线，不重新生成
   renderForeshadowPanel(); // 内部有签名缓存，场景未变时仅刷新过期提示与结果
+  renderPacingPanel(); // 内部有签名缓存，场景未变时仅刷新过期提示与结果
   clearTimeout(reanalyzeTimer);
   reanalyzeTimer = setTimeout(() => runAnalysis(true), 500);
 }
@@ -2389,6 +2404,193 @@ function renderForeshadowResult() {
   }
 }
 
+/* ============================================================
+ * 节奏校验（高强度场景连续段）
+ * ============================================================ */
+function paceSignature() {
+  if (!state.story) return '';
+  // 场景集合（ID / 标题）变化时才重建勾选行
+  return JSON.stringify(state.story.scenes.map((s) => [s.id, s.title || '']));
+}
+
+function markPacingStale() {
+  if (!state.paceResult) return;
+  state.paceStale = true;
+  const el = $('paceStale');
+  if (el) el.hidden = false;
+}
+
+function renderPacingPanel() {
+  const card = $('paceCard');
+  if (!state.story) { card.hidden = true; return; }
+  card.hidden = false;
+
+  // 连续数输入框只在失焦同步时重建值，避免打断输入
+  const limitEl = $('paceLimit');
+  if (document.activeElement !== limitEl) limitEl.value = state.pacing.maxConsecutive;
+
+  // 仅当场景集合变化时才重建勾选行，避免打断正在进行的交互
+  const sig = paceSignature();
+  if (sig !== state._paceSig) {
+    state._paceSig = sig;
+    // 场景被删除时自动从勾选中剔除
+    const valid = new Set(state.story.scenes.map((s) => s.id));
+    state.pacing.intenseScenes = state.pacing.intenseScenes.filter((id) => valid.has(id));
+    renderPaceSceneRows();
+  }
+
+  $('paceStale').hidden = !state.paceStale;
+  renderPacingResult();
+}
+
+/** 渲染高强度场景勾选行（全部场景各一行，勾选即纳入） */
+function renderPaceSceneRows() {
+  const box = $('paceScenes');
+  box.innerHTML = '';
+  const picked = new Set(state.pacing.intenseScenes);
+  state.story.scenes.forEach((sc) => {
+    const row = document.createElement('label');
+    row.className = 'pace-scene-row';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = picked.has(sc.id);
+    cb.addEventListener('change', () => {
+      if (cb.checked) {
+        if (!state.pacing.intenseScenes.includes(sc.id)) state.pacing.intenseScenes.push(sc.id);
+      } else {
+        state.pacing.intenseScenes = state.pacing.intenseScenes.filter((id) => id !== sc.id);
+      }
+      markPacingStale();
+    });
+    const id = document.createElement('code');
+    id.textContent = sc.id;
+    const title = document.createElement('span');
+    title.className = 'pace-scene-title';
+    title.textContent = sc.title || '';
+    row.append(cb, id, title);
+    box.appendChild(row);
+  });
+}
+
+async function runPacing() {
+  if (!state.story) return;
+  const intenseScenes = [...state.pacing.intenseScenes];
+  const limit = Number(state.pacing.maxConsecutive);
+  if (!Number.isInteger(limit) || limit < 1 || limit > 10) {
+    return toast('请填写 1～10 之间的整数作为最长连续场景数');
+  }
+  if (!intenseScenes.length) return toast('请至少勾选一个高强度场景');
+
+  try {
+    // 对编辑中的未保存草稿直接校验（不落盘）
+    state.paceResult = await api('POST', '/api/pacing', {
+      story: state.story,
+      query: { intenseScenes, maxConsecutive: limit },
+    });
+    state.paceStale = false;
+    renderPacingPanel();
+  } catch (e) {
+    toast(`节奏校验失败：${e.message}`);
+  }
+}
+
+const PACE_STATUS_META = {
+  pass: { cls: 'pq-ok', icon: '✓' },
+  violation: { cls: 'pq-err', icon: '✗' },
+  truncated: { cls: 'pq-warn', icon: '⚠' },
+  'intense-unreachable': { cls: 'pq-warn', icon: '⚠' },
+  'start-blocked': { cls: 'pq-err', icon: '✗' },
+};
+
+/** 违规路线视图：场景节点标注高强度与连续计数，选项边带选择后的计数 */
+function buildPacingPathView(path, knownVars) {
+  const wrap = document.createElement('div');
+  wrap.className = 'path-view';
+  (path || []).forEach((node, i, arr) => {
+    if (node.kind === 'scene') {
+      const div = document.createElement('div');
+      div.className = 'path-node scene';
+      let badge = i === 0 ? '<span class="badge badge-ok">起点</span>' : '';
+      if (node.intense) badge += '<span class="badge badge-warn">高强度</span>';
+      if (i === arr.length - 1) badge += `<span class="badge badge-err">连续 ${node.streak} 个 · 超限</span>`;
+      const streakCls = node.streak > 0 ? 'pace-streak-hot' : 'pace-streak-zero';
+      div.innerHTML = `<span class="pn-title"></span><span class="pn-id"></span>${badge}`
+        + `<span class="pace-streak ${streakCls}" title="进入该场景后连续经过的高强度场景数">连续 × ${node.streak}</span>`;
+      div.querySelector('.pn-title').textContent = node.title || node.sceneId;
+      div.querySelector('.pn-id').textContent = node.sceneId;
+      div.insertAdjacentHTML('beforeend', stateChips(node.state, knownVars || []));
+      wrap.appendChild(div);
+    } else {
+      const div = document.createElement('div');
+      div.className = 'path-edge';
+      div.appendChild(document.createTextNode(
+        `选项 ${node.optionIndex + 1}「${node.optionText || ''}」 → ${node.target}`));
+      if (node.optionUid) {
+        const uid = document.createElement('code');
+        uid.className = 'cov-uid';
+        uid.textContent = node.optionUid;
+        div.appendChild(uid);
+      }
+      if (node.intenseAfter) {
+        div.insertAdjacentHTML('beforeend',
+          `<span class="badge badge-warn">进入高强度 · 连续 ${node.streakAfter}</span>`);
+      } else {
+        div.insertAdjacentHTML('beforeend', '<span class="badge badge-ok">非高强度 · 计数清零</span>');
+      }
+      if (node.stateAfter) {
+        div.insertAdjacentHTML('beforeend', stateChips(node.stateAfter, knownVars || []));
+      }
+      wrap.appendChild(div);
+    }
+  });
+  return wrap;
+}
+
+function renderPacingResult() {
+  const box = $('paceResult');
+  box.innerHTML = '';
+  const r = state.paceResult;
+  if (!r || !state.story) return;
+
+  const meta = PACE_STATUS_META[r.status] || { cls: 'pq-warn', icon: '⚠' };
+  const banner = document.createElement('div');
+  banner.className = `pq-banner ${meta.cls}`;
+  banner.textContent = `${meta.icon} ${r.message}`;
+  box.appendChild(banner);
+
+  if (r.conditionErrors && r.conditionErrors.length) {
+    const note = document.createElement('div');
+    note.className = 'pq-note';
+    note.textContent = `剧情中存在 ${r.conditionErrors.length} 处条件语法错误，本次校验按恒真处理（详见一致性分析）。`;
+    box.appendChild(note);
+  }
+
+  if (r.startBlocked) return;
+
+  // 统计
+  const verdict = { pass: '通过', violation: '发现超限' }[r.status] || '无法判定';
+  const stats = document.createElement('div');
+  stats.className = 'stats';
+  stats.innerHTML = `
+    <div class="stat ${r.status === 'pass' ? 'stat-ok' : (r.status === 'violation' ? 'stat-bad' : 'stat-warn')}"><span>校验结论</span><b>${verdict}</b></div>
+    <div class="stat"><span>最长连续上限</span><b>${r.query.maxConsecutive}</b></div>
+    <div class="stat"><span>观察到最长连续段</span><b>${r.maxStreakObserved}</b></div>
+    <div class="stat"><span>高强度具体状态</span><b>${r.intenseStates}</b></div>
+    <div class="stat"><span>枚举具体状态</span><b>${r.counts.states}</b></div>
+  `;
+  box.appendChild(stats);
+
+  // 违规：最短违规路线（按选项步数）与沿途变量状态、连续计数
+  if (r.violation) {
+    const label = document.createElement('div');
+    label.className = 'cov-section-label';
+    label.textContent = `最短超限路线（${r.violation.depth} 步选项，在「${r.violation.title || r.violation.sceneId}」`
+      + `连续第 ${r.violation.streak} 个高强度场景，超过上限 ${r.violation.maxConsecutive}）`;
+    box.appendChild(label);
+    box.appendChild(buildPacingPathView(r.violation.path, r.knownVars));
+  }
+}
+
 function fmtTime(iso) {
   if (!iso) return '';
   const d = new Date(iso);
@@ -2800,6 +3002,24 @@ function bindGlobalEvents() {
     state.foreshadow.payoffs.push('');
     renderFsRows('payoffs');
     markForeshadowStale();
+  });
+  $('btnRunPacing').addEventListener('click', runPacing);
+  $('paceLimit').addEventListener('input', (e) => {
+    const v = Number(e.target.value);
+    if (Number.isInteger(v)) {
+      state.pacing.maxConsecutive = v;
+      markPacingStale();
+    }
+  });
+  $('paceLimit').addEventListener('change', (e) => {
+    // 失焦 / 步进时规整回 1～10
+    let v = Number(e.target.value);
+    if (!Number.isInteger(v)) v = 3;
+    v = Math.min(10, Math.max(1, v));
+    state.pacing.maxConsecutive = v;
+    e.target.value = v;
+    markPacingStale();
+    renderPacingPanel();
   });
   $('btnCloseDetail').addEventListener('click', () => $('detailPanel').hidden = true);
   $('btnSaveBaseline').addEventListener('click', saveBaseline);

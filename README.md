@@ -1,6 +1,6 @@
 # 分支剧情一致性审校台（Branching Story Auditor）
 
-一个用于检查 **分支剧情 / 互动叙事脚本一致性** 的 Web 应用。支持为每个场景设置 **布尔前置条件、进入时状态赋值**，为每个选项设置 **显示条件、状态赋值、跳转目标和正整数权重**，并指定剧情起点。后端会从起点出发，按 **「场景 + 变量状态」组合状态** 进行穷举传播与去重，因此即使剧情包含环路（可反复返回的场景），分析也保证终止。基于同一状态图，还可以对编辑中的草稿做 **结局概率推演**：精确求解各终止场景的最终到达概率，并单独列出永远困在循环中的概率质量；生成 **选项覆盖路线**：用确定性贪心集合覆盖压缩出一组可执行路线，让所有实际可走的选项至少被走一遍；分析 **结局必经抉择**：精确求出每个可达终止场景的全部到达路线共同经过的稳定选项（含环、同场景多状态仍精确终止），并给出必经次序、最短见证路径与绕开反例查询；以及做 **伏笔回收路线校验**：选择铺垫场景与回收场景后，把「待回收」标记并入状态遍历，找出到达设计结局时伏笔仍未回收的最短违规路线。
+一个用于检查 **分支剧情 / 互动叙事脚本一致性** 的 Web 应用。支持为每个场景设置 **布尔前置条件、进入时状态赋值**，为每个选项设置 **显示条件、状态赋值、跳转目标和正整数权重**，并指定剧情起点。后端会从起点出发，按 **「场景 + 变量状态」组合状态** 进行穷举传播与去重，因此即使剧情包含环路（可反复返回的场景），分析也保证终止。基于同一状态图，还可以对编辑中的草稿做 **结局概率推演**：精确求解各终止场景的最终到达概率，并单独列出永远困在循环中的概率质量；生成 **选项覆盖路线**：用确定性贪心集合覆盖压缩出一组可执行路线，让所有实际可走的选项至少被走一遍；分析 **结局必经抉择**：精确求出每个可达终止场景的全部到达路线共同经过的稳定选项（含环、同场景多状态仍精确终止），并给出必经次序、最短见证路径与绕开反例查询；以及做 **伏笔回收路线校验**：选择铺垫场景与回收场景后，把「待回收」标记并入状态遍历，找出到达设计结局时伏笔仍未回收的最短违规路线；还可以做 **节奏校验（高强度连场）**：勾选高强度场景并设置允许的最长连续场景数（1～10），把「当前连续高强度计数」并入状态遍历（进入非高强度场景即清零、环路中的连续段也累计），找出连续高强度场景超限的最短路线。
 
 ## 能发现什么问题
 
@@ -242,6 +242,21 @@ npm start
 
 响应要点：`ok`（是否通过）、`status`（`pass` / `violation` / `setup-unreachable` / `no-ending` / `truncated` / `start-blocked`）、`truncated`、`setupReached`、`pendingStates`（待回收具体状态数）、`endingCount` / `endingStates` / `endings`（可达设计结局明细）、`violation`（违规时含 `endingScene` / `depth` 选项步数 / `path` 场景与选项交替、场景节点带 `state` 与 `pending`、`foreshadow: setup|payoff` 标注 / `finalState`；无违规为 `null`）、`counts`、`knownVars`、`conditionErrors`、`statesExplored`、`maxStates`、`message`。
 
+## 节奏校验（高强度连场）
+
+编辑页右侧的「节奏校验（高强度连场）」面板回答：**“会不会有玩家沿某条路线连续遭遇太多高强度场景，节奏一直绷着得不到喘息？”**
+
+1. 在面板的场景清单中**勾选高强度场景**，并填写允许的**最长连续场景数（1～10 的整数）**；
+2. 点击「运行校验」，后端对 **编辑中的未保存草稿**（不落盘）沿「场景 + 完整变量状态」图展开，并把 **当前连续高强度计数 `streak` 并入遍历去重键**——状态键 = `(场景 ID, 变量位图, streak)`：进入高强度场景时 `streak += 1`（起点即高强度算第 1 个），进入非高强度场景时 `streak` 清零。把计数并入去重键后，同一 `(场景, 变量状态)` 在不同连续计数下是不同节点：**在高强度环路里每多绕一圈计数都会继续累计**，不会被去重错误抹平。`streak` 取值仅为 `0..maxConsecutive+1`，状态总数至多为 场景数 × 2^变量数 × (maxConsecutive+1)，含任意环路仍必然终止（沿用约 100 万状态安全上限）；
+3. 遍历完全沿用既有传播规则：选项条件不成立的边不走、选项赋值与目标场景进入赋值依次应用、目标场景前置条件不成立的边不存在、悬空跳转不构成边；
+4. **超限判定**：某具体状态出现连续第 `maxConsecutive+1` 个高强度场景即超限。BFS 按选项步数逐层展开，首个发现的超限状态即 **按选项步数最短的违规路线**，发现即停（路线真实可走，结论确凿）；结果展示该路线沿途的 **每个场景、到达时的完整变量状态与当时的连续计数**（场景节点标注「高强度 / 连续 × n」，选项边标注「进入高强度 · 连续 n」或「非高强度 · 计数清零」）；
+5. **通过判定**：只有 **完整遍历（未截断）且没有任何超限状态** 才判 `pass`（纯循环、死局、没有设计结局都不影响，通过消息会给出观察到的最长连续段长度）；勾选的高强度场景全部不可达时判 `intense-unreachable`（无法判定）；达到状态安全上限时判 `truncated` 并标明**无法判定**（已探索范围内无超限也不能断言通过）；起点前置不成立时判 `start-blocked`；
+6. 校验针对编辑中的草稿；**草稿、勾选集合或连续数上限被修改后，旧结果立即标记为「可能过期」**，重新「运行校验」即可。
+
+**API 校验（返回 400）**：`maxConsecutive` 必须是 1～10 的整数（数字字符串会自动解析）；`intenseScenes` 不得为空、不得含空行或重复项；每个场景 ID 必须存在；剧情缺少有效起点。
+
+请求 / 响应：`POST /api/pacing` 请求体为 `{ story, query: { intenseScenes, maxConsecutive } }`（草稿不保存，可注入测试用 `maxStates`），已保存剧情用 `POST /api/stories/:id/pacing`（请求体即 `query` 或 `{ query }`）。响应要点：`ok`、`status`（`pass` / `violation` / `truncated` / `intense-unreachable` / `start-blocked`）、`query`（回显 `maxConsecutive` 与带标题的 `intenseScenes`）、`truncated`、`intenseReached`、`intenseStates`、`maxStreakObserved`（已观察到的最长连续段）、`violation`（超限时含 `sceneId` / `streak` / `maxConsecutive` / `depth` 选项步数 / `path` 场景与选项交替、场景节点带 `state` / `streak` / `intense`、选项边带 `stateAfter` / `streakAfter` / `intenseAfter` / `finalState`；无超限为 `null`）、`counts`、`knownVars`、`conditionErrors`、`statesExplored`、`maxStates`、`message`。
+
 ## HTTP API
 
 | 方法 | 路径 | 说明 |
@@ -267,6 +282,8 @@ npm start
 | `POST` | `/api/stories/:id/coverage/replay` | 对已保存剧情做覆盖路线逐步回放，请求体即 `route` |
 | `POST` | `/api/foreshadow` | 伏笔回收路线校验：对请求体中的草稿剧情直接校验（不落盘），请求体 `{ story, query: { setups, payoffs } }`（可注入测试用 `maxStates`） |
 | `POST` | `/api/stories/:id/foreshadow` | 对已保存剧情做伏笔回收路线校验，请求体即 `query` 或 `{ query }` |
+| `POST` | `/api/pacing` | 节奏校验（高强度连场）：对请求体中的草稿剧情直接校验（不落盘），请求体 `{ story, query: { intenseScenes, maxConsecutive } }`（可注入测试用 `maxStates`） |
+| `POST` | `/api/stories/:id/pacing` | 对已保存剧情做节奏校验，请求体即 `query` 或 `{ query }` |
 | `POST` | `/api/stories/:id/baseline` | 把请求体中的剧情分析结果保存为基线（同时落盘剧情），返回 `{ story, baseline, analysis }` |
 | `POST` | `/api/stories/:id/baseline/compare` | 基线对比；请求体可省略（对比已保存剧情）或传入编辑中的草稿，返回 `{ summary, items }` |
 | `DELETE` | `/api/stories/:id/baseline` | 删除基线（剧情内容不变） |
@@ -296,11 +313,20 @@ npm start
 }
 ```
 
+节奏校验的 `query` 形如（`intenseScenes` 为高强度场景 ID 数组、必填且不可重复，`maxConsecutive` 为 1～10 的整数）：
+
+```json
+{
+  "intenseScenes": ["forest", "castle", "dungeon"],
+  "maxConsecutive": 2
+}
+```
+
 ## 目录结构
 
 ```
 .
-├── server.js              # Express 入口与 REST API（含基线、目标路径查询、结局概率推演、结局必经抉择、选项覆盖路线与逐步回放、伏笔回收路线校验接口）
+├── server.js              # Express 入口与 REST API（含基线、目标路径查询、结局概率推演、结局必经抉择、选项覆盖路线与逐步回放、伏笔回收 / 节奏校验接口）
 ├── src/
 │   ├── expression.js      # 布尔表达式递归下降解析器 / 求值 / 失败解释
 │   ├── analyzer.js        # 「场景+状态」BFS 传播去重分析引擎（附带问题指纹）
@@ -310,6 +336,7 @@ npm start
 │   ├── coverage.js        # 选项覆盖路线：可走选项见证路径 + 确定性贪心集合覆盖压缩
 │   ├── replay.js          # 覆盖路线逐步回放：按稳定 UID 用当前草稿逐步重校验，停在首个分歧点
 │   ├── foreshadow.js      # 伏笔回收路线校验：待回收标记并入状态遍历，求最短违规路线
+│   ├── pacing.js          # 节奏校验：连续高强度计数并入「场景+变量状态」去重键，环路连续段照常累计，求最短超限路线
 │   ├── weight.js          # 选项正整数权重的统一校验（保存 / 导入 / 推演共用）
 │   ├── fingerprint.js     # 不依赖数组顺序的问题稳定指纹
 │   ├── baseline.js        # 基线快照构建与新增/已修复/仍存在/详情变化对比
@@ -330,6 +357,7 @@ npm start
 │   ├── coverage.js        # 选项覆盖路线与 API 自检（node test/coverage.js）
 │   ├── replay.js          # 覆盖路线逐步回放与 API 自检（node test/replay.js）
 │   ├── foreshadow.js      # 伏笔回收路线校验（违规 / 通过 / 铺垫不可达 / 无结局 / 截断）与 API 自检（node test/foreshadow.js）
+│   ├── pacing.js          # 节奏校验（超限最短路线 / 清零 / 环路累计 / 不可达 / 截断）与 API 自检（node test/pacing.js）
 │   └── healthcheck.js     # 健康检查探针回归测试（node test/healthcheck.js）
 ├── Dockerfile
 └── docker-compose.yml
@@ -338,7 +366,7 @@ npm start
 自检：
 
 ```bash
-npm test          # 依次运行 smoke.js、baseline.js、pathquery.js、probability.js、forcedchoice.js、coverage.js、replay.js、foreshadow.js 与 healthcheck.js
+npm test          # 依次运行 smoke.js、baseline.js、pathquery.js、probability.js、forcedchoice.js、coverage.js、replay.js、foreshadow.js、pacing.js 与 healthcheck.js
 ```
 
 ## 技术栈
